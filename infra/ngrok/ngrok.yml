@@ -1,0 +1,12 @@
+version: "2"
+
+authtoken: 2nwcFwr0mKWXjyIJlmNBKt1olum_22AST7oKxEqBPrHPQgXvh
+
+tunnels:
+  rest_api:
+    addr: rest_api:8000
+    proto: http
+
+  ws_api:
+    addr: ws_api:8001
+    proto: http

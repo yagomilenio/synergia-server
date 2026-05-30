@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arquitectura Dual Role</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@700;800&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #070b14;
+    font-family: 'JetBrains Mono', monospace;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: radial-gradient(circle, #161d30 1px, transparent 1px);
+    background-size: 30px 30px;
+    pointer-events: none;
+  }
+
+  .canvas {
+    width: 1140px;
+    height: 700px;
+    position: relative;
+  }
+
+  .main-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 5px;
+    color: #2a3050;
+    text-align: center;
+    position: absolute;
+    top: 8px;
+    width: 100%;
+    text-transform: uppercase;
+  }
+
+  /* ── NODE BASE ── */
+  .node {
+    position: absolute;
+    border-radius: 14px;
+    padding: 14px 16px;
+    border: 1px solid;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .node-icon  { font-size: 22px; line-height: 1; }
+  .node-name  { font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 800; }
+  .node-desc  { font-size: 8px; opacity: .55; line-height: 1.5; letter-spacing: .4px; }
+  .node-tag   {
+    display: inline-block; font-size: 7px; padding: 2px 8px;
+    border-radius: 4px; font-weight: 700; letter-spacing: 1px;
+    width: fit-content; margin-top: 2px;
+  }
+
+  /* ── CLIENT — DUAL ROLE ── */
+  .client-wrap {
+    position: absolute;
+    left: 18px; top: 60px;
+    width: 200px; height: 580px;
+    border-radius: 18px;
+    border: 1px solid rgba(250,204,21,.25);
+    background: rgba(250,204,21,.03);
+  }
+  .client-wrap-label {
+    position: absolute;
+    top: 14px; left: 0; right: 0;
+    text-align: center;
+    font-size: 8px; letter-spacing: 4px;
+    text-transform: uppercase; font-weight: 700;
+    color: #fbbf24;
+  }
+  .client-divider {
+    position: absolute;
+    left: 16px; right: 16px;
+    top: 50%; height: 1px;
+    background: rgba(250,204,21,.12);
+  }
+  .client-role-label {
+    position: absolute;
+    font-size: 7px; letter-spacing: 2px;
+    text-transform: uppercase; font-weight: 700;
+    left: 0; right: 0; text-align: center;
+  }
+  .role-master-lbl { top: 38%; color: rgba(99,102,241,.5); }
+  .role-slave-lbl  { top: 60%; color: rgba(6,182,212,.5); }
+
+  /* client node master role */
+  .n-client-master {
+    left: 34px; top: 100px; width: 164px;
+    background: rgba(99,102,241,.1); border-color: rgba(99,102,241,.35); color: #a5b4fc;
+  }
+  .n-client-master .node-name { color: #c7d2fe; }
+  .tag-indigo { background: rgba(99,102,241,.2); color: #a5b4fc; }
+
+  /* client node slave role */
+  .n-client-slave {
+    left: 34px; top: 370px; width: 164px;
+    background: rgba(6,182,212,.08); border-color: rgba(6,182,212,.35); color: #67e8f9;
+  }
+  .n-client-slave .node-name { color: #a5f3fc; }
+  .tag-cyan { background: rgba(6,182,212,.2); color: #22d3ee; }
+
+  /* dual badge */
+  .dual-badge {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(250,204,21,.1);
+    border: 1px solid rgba(250,204,21,.3);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 7.5px; font-weight: 700; letter-spacing: 2px;
+    color: #fbbf24; text-transform: uppercase;
+    white-space: nowrap; z-index: 10;
+  }
+
+  /* ── API REST ── */
+  .n-rest {
+    left: 330px; top: 120px; width: 155px;
+    background: rgba(139,92,246,.1); border-color: rgba(139,92,246,.4); color: #c4b5fd;
+  }
+  .n-rest .node-name { color: #ddd6fe; }
+  .tag-violet { background: rgba(139,92,246,.2); color: #c4b5fd; }
+
+  /* ── WS GATEWAY ── */
+  .n-ws {
+    left: 330px; top: 370px; width: 155px;
+    background: rgba(6,182,212,.1); border-color: rgba(6,182,212,.55); color: #67e8f9;
+    box-shadow: 0 0 30px rgba(6,182,212,.15);
+    animation: glow 2.5s ease-in-out infinite;
+  }
+  .n-ws .node-name { color: #a5f3fc; }
+
+  /* ── RABBITMQ ── */
+  .n-rabbit {
+    left: 600px; top: 230px; width: 160px;
+    background: rgba(245,158,11,.09); border-color: rgba(245,158,11,.5); color: #fcd34d;
+    animation: pulse-rabbit 2s ease-in-out infinite;
+  }
+  .n-rabbit .node-name { color: #fde68a; }
+  .tag-yellow { background: rgba(245,158,11,.2); color: #fcd34d; }
+
+  /* ── MARIADB ── */
+  .n-db {
+    left: 600px; top: 460px; width: 160px;
+    background: rgba(244,63,94,.08); border-color: rgba(244,63,94,.4); color: #fda4af;
+  }
+  .n-db .node-name { color: #fecdd3; }
+  .tag-rose { background: rgba(244,63,94,.2); color: #fb7185; }
+
+  /* ── SVG ── */
+  svg.arrows {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none; overflow: visible;
+  }
+
+  @keyframes flow {
+    from { stroke-dashoffset: 300; }
+    to   { stroke-dashoffset: 0; }
+  }
+  @keyframes glow {
+    0%,100% { box-shadow: 0 0 30px rgba(6,182,212,.12); }
+    50%     { box-shadow: 0 0 55px rgba(6,182,212,.32); }
+  }
+  @keyframes pulse-rabbit {
+    0%,100% { box-shadow: none; }
+    50%     { box-shadow: 0 0 40px rgba(245,158,11,.2); }
+  }
+
+  .flow { stroke-dasharray: 8 5; animation: flow 1.6s linear infinite; }
+
+  /* arrow labels */
+  .albl {
+    position: absolute;
+    font-size: 7px; font-weight: 700; letter-spacing: 1.5px;
+    padding: 2px 7px; border-radius: 4px; text-transform: uppercase;
+  }
+  .albl-indigo { color: #818cf8; background: rgba(99,102,241,.12); border: 1px solid rgba(99,102,241,.25); }
+  .albl-cyan   { color: #22d3ee; background: rgba(6,182,212,.12);  border: 1px solid rgba(6,182,212,.3); }
+  .albl-violet { color: #a78bfa; background: rgba(139,92,246,.12); border: 1px solid rgba(139,92,246,.25); }
+  .albl-yellow { color: #fbbf24; background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.25); }
+  .albl-rose   { color: #fb7185; background: rgba(244,63,94,.12);  border: 1px solid rgba(244,63,94,.25); }
+
+  /* legend */
+  .legend {
+    position: absolute;
+    bottom: 22px; right: 24px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 8px; letter-spacing: 1px; text-transform: uppercase;
+  }
+  .legend-line {
+    width: 28px; height: 2px; border-radius: 2px;
+  }
+
+  /* role arrows wrap */
+  .role-arrow {
+    position: absolute;
+    left: 220px;
+    font-size: 9px; color: #4a5080;
+  }
+
+</style>
+</head>
+<body>
+<div class="canvas">
+
+  <div class="main-title">Arquitectura Dual Role · Cliente como Master y Esclavo · EDA + CQRS</div>
+
+  <!-- CLIENT WRAP -->
+  <div class="client-wrap">
+    <div class="client-wrap-label">Cliente</div>
+    <div class="client-divider"></div>
+    <div class="dual-badge">Dual Role</div>
+    <div class="client-role-label role-master-lbl">— rol master —</div>
+    <div class="client-role-label role-slave-lbl">— rol esclavo —</div>
+  </div>
+
+  <!-- CLIENT MASTER ROLE -->
+  <div class="node n-client-master">
+    <div class="node-icon">🖥️</div>
+    <div class="node-name">Cliente</div>
+    <div class="node-desc">Cuando actúa como master envía órdenes via HTTP</div>
+    <div class="node-tag tag-indigo">ROL: MASTER</div>
+  </div>
+
+  <!-- CLIENT SLAVE ROLE -->
+  <div class="node n-client-slave">
+    <div class="node-icon">🤖</div>
+    <div class="node-name">Cliente</div>
+    <div class="node-desc">Cuando actúa como esclavo escucha órdenes via WebSocket</div>
+    <div class="node-tag tag-cyan">ROL: ESCLAVO</div>
+  </div>
+
+  <!-- API REST -->
+  <div class="node n-rest">
+    <div class="node-icon">⚡</div>
+    <div class="node-name">API REST</div>
+    <div class="node-desc">Valida negocio · Autentica · Persiste en DB · Publica a Rabbit</div>
+    <div class="node-tag tag-violet">HTTP · PRODUCER</div>
+  </div>
+
+  <!-- WS GATEWAY -->
+  <div class="node n-ws">
+    <div class="node-icon">🔌</div>
+    <div class="node-name">WS Gateway</div>
+    <div class="node-desc">Consume Rabbit · Autentica clientes · Empuja órdenes por WebSocket persistente</div>
+    <div class="node-tag tag-cyan">WS · CONSUMER</div>
+  </div>
+
+  <!-- RABBITMQ -->
+  <div class="node n-rabbit">
+    <div class="node-icon">🐇</div>
+    <div class="node-name">RabbitMQ</div>
+    <div class="node-desc">Exchange · Routing · Queues por cliente-esclavo</div>
+    <div class="node-tag tag-yellow">AMQP · BROKER</div>
+  </div>
+
+  <!-- MARIADB -->
+  <div class="node n-db">
+    <div class="node-icon">🗄️</div>
+    <div class="node-name">MariaDB</div>
+    <div class="node-desc">Persistencia compartida entre API REST y WS Gateway</div>
+    <div class="node-tag tag-rose">SQL · SHARED DB</div>
+  </div>
+
+  <!-- ARROW LABELS -->
+  <!-- master → api rest -->
+  <div class="albl albl-indigo" style="left:238px; top:172px;">HTTP POST</div>
+  <!-- slave ← ws gateway -->
+  <div class="albl albl-cyan"   style="left:238px; top:432px;">WebSocket</div>
+  <!-- api rest → rabbit -->
+  <div class="albl albl-violet" style="left:510px; top:195px;">AMQP</div>
+  <!-- rabbit → ws gateway -->
+  <div class="albl albl-yellow" style="left:510px; top:368px;">AMQP</div>
+  <!-- api rest → mariadb -->
+  <div class="albl albl-rose"   style="left:510px; top:470px;">SQL</div>
+  <!-- ws gateway → mariadb -->
+  <div class="albl albl-rose"   style="left:390px; top:562px;">SQL</div>
+
+  <!-- SVG ARROWS -->
+  <svg class="arrows">
+    <defs>
+      <marker id="ai" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#818cf8"/></marker>
+      <marker id="ac" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#22d3ee"/></marker>
+      <marker id="av" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#a78bfa"/></marker>
+      <marker id="ay" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#fbbf24"/></marker>
+      <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3z" fill="#fb7185"/></marker>
+      <marker id="ac2" markerWidth="8" markerHeight="8" refX="1" refY="3" orient="auto"><path d="M8,0 L8,6 L0,3z" fill="#22d3ee"/></marker>
+    </defs>
+
+    <!-- Cliente master → API REST -->
+    <line class="flow" x1="200" y1="180" x2="328" y2="190" stroke="#818cf8" stroke-width="1.8" marker-end="url(#ai)"/>
+
+    <!-- WS Gateway → Cliente esclavo (flecha inversa, el gateway empuja) -->
+    <line class="flow" x1="328" y1="438" x2="200" y2="430" stroke="#22d3ee" stroke-width="1.8" marker-end="url(#ac2)"/>
+
+    <!-- API REST → RabbitMQ -->
+    <path class="flow" d="M 487 195 C 540 195 560 270 598 272" stroke="#a78bfa" stroke-width="1.8" fill="none" marker-end="url(#av)"/>
+
+    <!-- RabbitMQ → WS Gateway -->
+    <path class="flow" d="M 598 330 C 560 330 540 400 487 420" stroke="#fbbf24" stroke-width="1.8" fill="none" marker-end="url(#ay)"/>
+
+    <!-- API REST → MariaDB -->
+    <path class="flow" d="M 487 240 C 540 240 560 480 598 490" stroke="#fb7185" stroke-width="1.8" fill="none" marker-end="url(#ar)"/>
+
+    <!-- WS Gateway → MariaDB -->
+    <path class="flow" d="M 408 528 C 408 560 560 540 598 520" stroke="#fb7185" stroke-width="1.8" fill="none" marker-end="url(#ar)"/>
+
+  </svg>
+
+  <!-- LEGEND -->
+  <div class="legend">
+    <div class="legend-item">
+      <div class="legend-line" style="background:#818cf8;"></div>
+      <span style="color:#818cf8;">HTTP · Master envía orden</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-line" style="background:#22d3ee;"></div>
+      <span style="color:#22d3ee;">WebSocket · Esclavo recibe orden</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-line" style="background:#a78bfa; background: repeating-linear-gradient(90deg,#a78bfa 0,#a78bfa 6px,transparent 6px,transparent 11px);"></div>
+      <span style="color:#a78bfa;">AMQP · Publicación a Rabbit</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-line" style="background:#fbbf24;"></div>
+      <span style="color:#fbbf24;">AMQP · Consumo de Rabbit</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-line" style="background:#fb7185;"></div>
+      <span style="color:#fb7185;">SQL · Persistencia MariaDB</span>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

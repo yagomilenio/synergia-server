@@ -1,0 +1,42 @@
+{
+    "task_cost": 1,
+    "upload_dir": "storage",
+    "process_until_confirmation": 1,
+    "max_upload_bytes": 1073741824,
+    "initial_credits": 500000000000,
+    "db_backend": "oracle",
+    "system_accounts": {
+        "fees": "SYSTEM_FEES",
+        "mint": "SYSTEM_MINT"
+    },
+    "rabbitmq": {
+        "user": "guest",
+        "host": "rabbitmq",
+        "port": 5672,
+        "queue": "tasks"
+    },
+    "oracle": {
+        "user": "synergia",
+        "dsn": "oracle:1521/FREEPDB1"
+    },
+    "mariadb" : {
+        "user": "synergia",
+        "address": "mariadb",
+        "database": "synergia"
+    },
+    "oauth": {
+    "google_client_id": "20233899821-7ttlpplr9th6a4dgcuolotd3nuvgfpjo.apps.googleusercontent.com",
+    "redirect_uri_google": "http://127.0.0.1:8080/auth/google/callback",
+    "github_client_id": "Ov23liaPwJj16YaZyKlv",
+    "redirect_uri_github": "http://127.0.0.1:8080/auth/github/callback"
+    },
+    "smtp": {
+    "host": "smtp.gmail.com",
+    "port": 587,
+    "user": "computerdistributednetwork@gmail.com",
+    "from": "Synergia <computerdistributednetwork@gmail.com>",
+    "redirect": "localhost:8000"
+    }
+    
+}
+
