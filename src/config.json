@@ -3,7 +3,7 @@
     "upload_dir": "storage",
     "process_until_confirmation": 1,
     "max_upload_bytes": 1073741824,
-    "initial_credits": 500000000000,
+    "initial_credits": 500000,
     "db_backend": "oracle",
     "system_accounts": {
         "fees": "SYSTEM_FEES",

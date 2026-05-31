@@ -986,7 +986,21 @@ async def create_result(
 
         gpu_cost = vram_avg * tdp_w * duracion
         ram_cost = ram_avg * duracion
-        amount = cpu_cycles + gpu_cost + ram_cost
+        
+        
+        CPU_COST_PER_CYCLE    = 1e-9
+        RAM_COST_PER_GB_SEC   = 0.001 * (887 / 1.985)
+        GPU_COST_PER_WATT_SEC = 0.0001 * (887 / 4.3)
+
+        ram_gb = ram_avg / (1024 ** 3)  # convertir bytes -> GB
+        vram_gb = vram_avg / 1024 #mb -> GB
+
+        amount = (
+            cpu_cycles   * CPU_COST_PER_CYCLE     +
+            ram_gb       * duracion * RAM_COST_PER_GB_SEC  +
+            vram_gb     * tdp_w * duracion * GPU_COST_PER_WATT_SEC
+        )
+
         
 
         if not task_row['is_deterministic']:
