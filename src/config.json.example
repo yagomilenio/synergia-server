@@ -1,0 +1,46 @@
+{
+    "task_cost": 1,
+    "upload_dir": "storage",
+    "process_until_confirmation": 1,
+    "max_upload_bytes": 1073741824,
+    "initial_credits": 500000000000,
+    "db_backend": "oracle",
+    "system_accounts": {
+        "fees": "SYSTEM_FEES",
+        "mint": "SYSTEM_MINT"
+    },
+    "rabbitmq": {
+        "user": "guest",
+        "password": "guest",
+        "host": "rabbitmq",
+        "port": 5672,
+        "queue": "tasks"
+    },
+    "oracle": {
+        "user": "synergia",
+        "password": "YOUR_ORACLE_PASSWORD",
+        "dsn": "oracle:1521/FREEPDB1"
+    },
+    "mariadb": {
+        "user": "synergia",
+        "password": "YOUR_MARIADB_PASSWORD",
+        "address": "mariadb",
+        "database": "synergia"
+    },
+    "oauth": {
+        "google_client_id": "YOUR_GOOGLE_CLIENT_ID",
+        "google_client_secret": "YOUR_GOOGLE_CLIENT_SECRET",
+        "redirect_uri_google": "http://127.0.0.1:8080/auth/google/callback",
+        "github_client_id": "YOUR_GITHUB_CLIENT_ID",
+        "github_client_secret": "YOUR_GITHUB_CLIENT_SECRET",
+        "redirect_uri_github": "http://127.0.0.1:8080/auth/github/callback"
+    },
+    "smtp": {
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "user": "YOUR_SMTP_USER",
+        "password": "YOUR_SMTP_PASSWORD",
+        "from": "Synergia <YOUR_SMTP_USER>",
+        "redirect": "localhost:8000"
+    }
+}
