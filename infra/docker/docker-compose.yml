@@ -47,8 +47,8 @@ services:
     container_name: rest_api
     command: uvicorn api:app --host 0.0.0.0 --port 8000 --reload --log-level debug --access-log
     volumes:
-      - ../src:/app
-      - ./storage:/app/storage   # persistir archivos subidos
+      - ../../src:/app
+      - ../../storage:/app/storage   # persistir archivos subidos
     ports:
       - "8000:8000"
     depends_on:
@@ -63,7 +63,7 @@ services:
     container_name: ws_api
     command: uvicorn ws_api:app --host 0.0.0.0 --port 8001 --reload --log-level debug --access-log
     volumes:
-      - ../src:/app
+      - ../../src:/app
     ports:
       - "8001:8001"
     depends_on:
