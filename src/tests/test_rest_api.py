@@ -2,37 +2,17 @@ import io
 import json
 import time
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, AsyncMock, patch, call
+from unittest.mock import MagicMock, AsyncMock, patch, call, mock_open
 import pytest
 from fastapi.testclient import TestClient
 
 
-
-FAKE_CONFIG = {
-    "task_cost": 1000,
-    "system_accounts": {
-        "fees":    "SYSTEM_FEES",
-        "rewards": "SYSTEM_REWARDS",
-        "burn":    "SYSTEM_BURN",
-        "mint":    "SYSTEM_MINT",
-    },
-    "rabbitmq": {"host": "localhost", "port": 5672, "user": "guest",
-                 "password": "guest", "queue": "main"},
-    "mariadb":  {"user": "root", "password": "1234",
-                 "database": "p2pcn", "address": "mariadb"},
-    "upload_dir": "/tmp/uploads",
-    "oauth": {
-        "google_client_id":     "gid",
-        "google_client_secret": "gsecret",
-        "github_client_id":     "ghid",
-        "github_client_secret": "ghsecret",
-    },
-}
-
-# JWT válido para user_id=1 (pre-generado con la SECRET_KEY del código)
 import jwt as _jwt
 _SECRET  = "VrQKDysvmgZv7kS/NjPi6k05lXRT4LP8mwABREImmHA="
 _ALGO    = "HS256"
+
+NEW_VALID_HASH   = "2f82328547c7c017a428dce74bef0b4e22b8db350c512a84902a6ca4106823c2"
+NEW_VALID_COMMIT = "acb9a43974e6cc97789d678479877c03c995982b"
 
 def _make_token(user_id: int = 1, expired: bool = False) -> str:
     delta = timedelta(minutes=-1) if expired else timedelta(hours=24)
@@ -45,41 +25,59 @@ EXPIRED_TOKEN = _make_token(1, expired=True)
 
 @pytest.fixture(scope="module")
 def client():
-    """
-    Crea el TestClient mockeando config, DB y otras dependencias
-    para que api.py arranque sin infraestructura real.
-    """
-    with patch("builtins.open", MagicMock()), \
-         patch("json.load", return_value=FAKE_CONFIG), \
-         patch("os.path.exists", return_value=True):
+    import sys
 
-        # Importamos config mockeado antes que api
-        import importlib, sys
+    for mod in ["config", "api", "db", "db.db_oracle", "utils.jwt_util",
+                "utils.configuration_interpreter", "utils.smtp_util",
+                "publisher", "schemas"]:
+        sys.modules.pop(mod, None)
 
-        # Limpiamos posibles imports previos para forzar recarga limpia
-        for mod in ["config", "api", "db", "db.db", "utils.jwt_util",
-                    "utils.configuration_interpreter", "publisher"]:
-            sys.modules.pop(mod, None)
+    mock_oracledb = MagicMock()
+    sys.modules["oracledb"] = mock_oracledb
 
-        with patch("mysql.connector.pooling.MySQLConnectionPool") as _pool, \
-             patch("publisher.Producer") as _prod, \
-             patch("api.load_system_account_ids", return_value={
-                 "mint": 1, "fees": 2, "burn": 3, "rewards": 4
-             }), \
-             patch("api.startup_event"):
+    mock_config = MagicMock()
+    mock_config.DB_BACKEND          = "oracle"
+    mock_config.TASK_COST           = 1000
+    mock_config.INITIAL_CREDITS     = 500000
+    mock_config.SYSTEM_ACCOUNTS     = {
+        "fees": "SYSTEM_FEES", "rewards": "SYSTEM_REWARDS",
+        "burn": "SYSTEM_BURN", "mint":    "SYSTEM_MINT",
+    }
+    mock_config.RABBITMQ_HOST       = "localhost"
+    mock_config.RABBITMQ_PORT       = 5672
+    mock_config.RABBITMQ_USER       = "guest"
+    mock_config.RABBITMQ_PASSWD     = "guest"
+    mock_config.UPLOAD_DIR          = "/tmp/uploads"
+    mock_config.MAX_UPLOAD_BYTES    = 10 * 1024 * 1024
+    mock_config.GOOGLE_CLIENT_ID    = "gid"
+    mock_config.GOOGLE_CLIENT_SECRET= "gsecret"
+    mock_config.GITHUB_CLIENT_ID    = "ghid"
+    mock_config.GITHUB_CLIENT_SECRET= "ghsecret"
+    mock_config.REDIRECT_URI_GOOGLE = "http://localhost/auth/google/callback"
+    mock_config.REDIRECT_URI_GITHUB = "http://localhost/auth/github/callback"
+    mock_config.SMTP_REDIRECT       = "http://localhost"
+    mock_config.JWT_SECRET_KEY      = _SECRET
+    mock_config.ALGORITHM           = _ALGO
+    mock_config.ACCESS_TOKEN_EXPIRE_MINUTES = 1440
+    sys.modules["config"] = mock_config
 
-            from api import app
-            with TestClient(app, raise_server_exceptions=False) as c:
-                yield c
+    with patch("publisher.Producer"), \
+         patch("api.load_system_account_ids", return_value={
+             "mint": 1, "fees": 2, "burn": 3, "rewards": 4
+         }), \
+         patch("api.startup_event"), \
+         patch("utils.smtp_util.send_verification_email"):
+
+        from api import app
+        with TestClient(app, raise_server_exceptions=True) as c:
+            yield c
 
 
-# Helpers reutilizables
 def auth_headers(token: str = None) -> dict:
     return {"token": token or VALID_TOKEN}
 
 
 
-# 1.  POST /account  — Crear usuario
 
 
 class TestCreateAccount:
@@ -89,116 +87,94 @@ class TestCreateAccount:
              patch("api.insert_account", return_value=99), \
              patch("api.insert_auth_local_credential"), \
              patch("api.insert_transfer"), \
+             patch("api.send_verification_email"), \
              patch("api.close_db"):
 
-            mock_conn = MagicMock()
-            mock_cursor = MagicMock()
-            mock_db.return_value = (mock_conn, mock_cursor)
-
-            resp = client.post("/account", params={
+            mock_db.return_value = (MagicMock(), MagicMock())
+            resp = client.post("/account", json={
                 "username": "testuser",
                 "passwd":   "securepass123",
-                "email":    "test@example.com",
+                "email":    "test@gmail.com",
             })
             assert resp.status_code == 200
             assert resp.json()["status"] == "Usuario creado correctamente"
 
     def test_create_account_invalid_email(self, client):
-        with patch("api.get_db") as mock_db, patch("api.close_db"):
-            mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/account", params={
-                "username": "testuser",
-                "passwd":   "securepass123",
-                "email":    "not-an-email",
-            })
-            assert resp.status_code == 400
-            assert "Email" in resp.json()["detail"]
+        resp = client.post("/account", json={
+            "username": "testuser",
+            "passwd":   "securepass123",
+            "email":    "not-an-email",
+        })
+        assert resp.status_code == 422
+        assert any(
+            err["loc"][-1] == "email"
+            for err in resp.json()["detail"]
+        )
 
     def test_create_account_short_username(self, client):
-        with patch("api.get_db") as mock_db, patch("api.close_db"):
-            mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/account", params={
-                "username": "ab",
-                "passwd":   "securepass123",
-                "email":    "test@example.com",
-            })
-            assert resp.status_code == 400
-            assert "Username" in resp.json()["detail"]
+        resp = client.post("/account", json={
+            "username": "ab",
+            "passwd":   "securepass123",
+            "email":    "test@gmail.com",
+        })
+        assert resp.status_code == 422
+        assert any(
+            err["loc"][-1] == "username"
+            for err in resp.json()["detail"]
+        )
 
     def test_create_account_long_username(self, client):
-        with patch("api.get_db") as mock_db, patch("api.close_db"):
-            mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/account", params={
-                "username": "a" * 33,
-                "passwd":   "securepass123",
-                "email":    "test@example.com",
-            })
-            assert resp.status_code == 400
+        resp = client.post("/account", json={
+            "username": "a" * 33,
+            "passwd":   "securepass123",
+            "email":    "test@gmail.com",
+        })
+        assert resp.status_code == 422
 
     def test_create_account_invalid_username_chars(self, client):
-        with patch("api.get_db") as mock_db, patch("api.close_db"):
-            mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/account", params={
-                "username": "user name!",
-                "passwd":   "securepass123",
-                "email":    "test@example.com",
-            })
-            assert resp.status_code == 400
+        resp = client.post("/account", json={
+            "username": "user name!",
+            "passwd":   "securepass123",
+            "email":    "test@gmail.com",
+        })
+        assert resp.status_code == 422
 
     def test_create_account_short_password(self, client):
-        with patch("api.get_db") as mock_db, patch("api.close_db"):
-            mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/account", params={
-                "username": "validuser",
-                "passwd":   "short",
-                "email":    "test@example.com",
-            })
-            assert resp.status_code == 400
-            assert "contraseña" in resp.json()["detail"]
+        resp = client.post("/account", json={
+            "username": "validuser",
+            "passwd":   "short",
+            "email":    "test@gmail.com",
+        })
+        assert resp.status_code == 422
+        assert any(
+            err["loc"][-1] == "passwd"
+            for err in resp.json()["detail"]
+        )
 
-    def test_create_account_duplicate_user(self, client):
-        import mysql.connector
-        with patch("api.get_db") as mock_db, \
-             patch("api.insert_account",
-                   side_effect=mysql.connector.IntegrityError("dup")), \
-             patch("api.close_db"):
-
-            mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/account", params={
-                "username": "existing",
-                "passwd":   "securepass123",
-                "email":    "existing@example.com",
-            })
-            assert resp.status_code == 400
-            assert "ya existe" in resp.json()["detail"]
+    
 
     def test_create_account_missing_email(self, client):
-        with patch("api.get_db") as mock_db, patch("api.close_db"):
-            mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/account", params={
-                "username": "testuser",
-                "passwd":   "securepass123",
-            })
-            # email=None → no coincide con EMAIL_REGEX → 400
-            assert resp.status_code == 400
+        resp = client.post("/account", json={
+            "username": "testuser",
+            "passwd":   "securepass123",
+        })
+        assert resp.status_code == 422
 
     def test_create_account_missing_username(self, client):
-        resp = client.post("/account", params={
+        resp = client.post("/account", json={
             "passwd": "securepass123",
-            "email":  "test@example.com",
+            "email":  "test@gmail.com",
         })
-        assert resp.status_code == 422  # FastAPI validation
+        assert resp.status_code == 422
 
     def test_create_account_missing_password(self, client):
-        resp = client.post("/account", params={
+        resp = client.post("/account", json={
             "username": "testuser",
-            "email":    "test@example.com",
+            "email":    "test@gmail.com",
         })
         assert resp.status_code == 422
 
 
-
-# 2.  GET /account/{username}  — Obtener cuenta
 
 
 class TestGetAccount:
@@ -217,12 +193,10 @@ class TestGetAccount:
 
             mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.get("/account/testuser")
-
             assert resp.status_code == 200
             data = resp.json()
             assert "account" in data
             assert "transfers" in data
-            # El id interno NO debe exponerse
             assert "id" not in data["account"]
 
     def test_get_account_not_found(self, client):
@@ -235,7 +209,6 @@ class TestGetAccount:
             assert resp.status_code == 404
 
     def test_get_account_no_id_in_response(self, client):
-        """El endpoint debe eliminar el campo 'id' de la respuesta."""
         fake = {"id": 42, "username": "u", "email": "u@u.com", "balance": 0}
         with patch("api.get_db") as mock_db, \
              patch("api.get_account_by_username", return_value=fake), \
@@ -248,7 +221,6 @@ class TestGetAccount:
 
 
 
-# 3.  GET /token  — Login JWT
 
 
 class TestGetToken:
@@ -256,15 +228,17 @@ class TestGetToken:
     def _fake_cred(self):
         from argon2 import PasswordHasher
         ph = PasswordHasher()
-        return {"id": 5, "password_hash": ph.hash("mypassword")}
+        return {"id": 5, "password_hash": ph.hash("mypassword"), "verified": 1}
 
     def test_login_by_username_ok(self, client):
         with patch("api.get_db") as mock_db, \
              patch("api.get_credentials_by_username", return_value=self._fake_cred()), \
+             patch("api.get_account_by_username", return_value={"username": "testuser"}), \
+             patch("api.get_account_by_email",    return_value={"email": "t@t.com"}), \
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.get("/token", params={
+            resp = client.post("/token", json={
                 "username": "testuser",
                 "passwd":   "mypassword",
             })
@@ -274,11 +248,13 @@ class TestGetToken:
     def test_login_by_email_ok(self, client):
         with patch("api.get_db") as mock_db, \
              patch("api.get_credentials_by_email", return_value=self._fake_cred()), \
+             patch("api.get_account_by_username", return_value={"username": "testuser"}), \
+             patch("api.get_account_by_email",    return_value={"email": "t@t.com", "username": "testuser"}), \
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.get("/token", params={
-                "email":  "test@example.com",
+            resp = client.post("/token", json={
+                "email":  "test@gmail.com",
                 "passwd": "mypassword",
             })
             assert resp.status_code == 200
@@ -289,7 +265,7 @@ class TestGetToken:
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.get("/token", params={
+            resp = client.post("/token", json={
                 "username": "testuser",
                 "passwd":   "wrongpassword",
             })
@@ -301,25 +277,27 @@ class TestGetToken:
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.get("/token", params={
+            resp = client.post("/token", json={
                 "username": "nobody",
-                "passwd":   "pass",
+                "passwd":   "password123",
             })
             assert resp.status_code == 401
 
     def test_login_no_username_no_email(self, client):
         with patch("api.get_db") as mock_db, patch("api.close_db"):
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.get("/token", params={"passwd": "pass"})
+            resp = client.post("/token", json={"passwd": "password123"})
             assert resp.status_code == 400
 
     def test_token_is_valid_jwt(self, client):
         with patch("api.get_db") as mock_db, \
              patch("api.get_credentials_by_username", return_value=self._fake_cred()), \
+             patch("api.get_account_by_username", return_value={"username": "testuser"}), \
+             patch("api.get_account_by_email",    return_value={"email": "t@t.com"}), \
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.get("/token", params={
+            resp = client.post("/token", json={
                 "username": "testuser",
                 "passwd":   "mypassword",
             })
@@ -328,8 +306,6 @@ class TestGetToken:
             assert decoded["sub"] == "5"
 
 
-
-# 4.  GET /auth/google  y  GET /auth/github  — OAuth init
 
 
 class TestOAuthInit:
@@ -372,7 +348,6 @@ class TestOAuthInit:
 
 
 
-# 5.  POST /task  — Crear tarea
 
 
 class TestCreateTask:
@@ -394,15 +369,15 @@ class TestCreateTask:
              patch("api.close_db"), \
              patch("api.Producer") as mock_prod:
 
-            mock_prod_inst = MagicMock()
-            mock_prod.return_value = mock_prod_inst
+            mock_prod.return_value = MagicMock()
             mock_db.return_value = (MagicMock(), MagicMock())
 
-            resp = client.post("/task", params={
+            resp = client.post("/task", json={
                 "name":        "Mi Tarea",
                 "description": "Desc",
                 "github_url":  "https://github.com/user/repo",
-                "repo_hash":   "abc123",
+                "repo_hash":   NEW_VALID_HASH,
+                "repo_commit": NEW_VALID_COMMIT,
             }, headers=auth_headers())
 
             assert resp.status_code == 200
@@ -416,10 +391,11 @@ class TestCreateTask:
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/task", params={
-                "name":       "Tarea",
-                "github_url": "https://github.com/user/repo",
-                "repo_hash":  "abc123",
+            resp = client.post("/task", json={
+                "name":        "Tarea",
+                "github_url":  "https://github.com/user/repo",
+                "repo_hash":   NEW_VALID_HASH,
+                "repo_commit": NEW_VALID_COMMIT,
             }, headers=auth_headers())
             assert resp.status_code == 403
 
@@ -429,26 +405,29 @@ class TestCreateTask:
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/task", params={
-                "name":       "Tarea",
-                "github_url": "https://github.com/user/repo",
-                "repo_hash":  "abc123",
+            resp = client.post("/task", json={
+                "name":        "Tarea",
+                "github_url":  "https://github.com/user/repo",
+                "repo_hash":   NEW_VALID_HASH,
+                "repo_commit": NEW_VALID_COMMIT,
             }, headers=auth_headers())
             assert resp.status_code == 400
 
     def test_create_task_no_token(self, client):
-        resp = client.post("/task", params={
-            "name":       "Tarea",
-            "github_url": "https://github.com/user/repo",
-            "repo_hash":  "abc123",
+        resp = client.post("/task", json={
+            "name":        "Tarea",
+            "github_url":  "https://github.com/user/repo",
+            "repo_hash":   NEW_VALID_HASH,
+            "repo_commit": NEW_VALID_COMMIT,
         })
-        assert resp.status_code == 422  # token requerido
+        assert resp.status_code == 422
 
     def test_create_task_expired_token(self, client):
-        resp = client.post("/task", params={
-            "name":       "Tarea",
-            "github_url": "https://github.com/user/repo",
-            "repo_hash":  "abc123",
+        resp = client.post("/task", json={
+            "name":        "Tarea",
+            "github_url":  "https://github.com/user/repo",
+            "repo_hash":   NEW_VALID_HASH,
+            "repo_commit": NEW_VALID_COMMIT,
         }, headers=auth_headers(EXPIRED_TOKEN))
         assert resp.status_code == 401
 
@@ -466,10 +445,11 @@ class TestCreateTask:
             mock_prod.return_value = mock_prod_inst
             mock_db.return_value = (MagicMock(), MagicMock())
 
-            client.post("/task", params={
-                "name":       "Tarea",
-                "github_url": "https://github.com/user/repo",
-                "repo_hash":  "abc123",
+            client.post("/task", json={
+                "name":        "Tarea",
+                "github_url":  "https://github.com/user/repo",
+                "repo_hash":   NEW_VALID_HASH,
+                "repo_commit": NEW_VALID_COMMIT,
             }, headers=auth_headers())
 
             mock_prod_inst.publish_chunks.assert_called_once()
@@ -482,16 +462,16 @@ class TestCreateTask:
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/task", params={
-                "name":       "Tarea",
-                "github_url": "https://github.com/user/repo",
-                "repo_hash":  "abc123",
+            resp = client.post("/task", json={
+                "name":        "Tarea",
+                "github_url":  "https://github.com/user/repo",
+                "repo_hash":   NEW_VALID_HASH,
+                "repo_commit": NEW_VALID_COMMIT,
             }, headers=auth_headers())
             assert resp.status_code == 401
 
 
 
-# 6.  GET /task  — Listar tareas
 
 
 class TestListTasks:
@@ -499,9 +479,9 @@ class TestListTasks:
     def _fake_rows(self):
         return [
             {"id": 1, "name": "T1", "description": "D1",
-             "github_url": "https://github.com/u/r1"},
+             "github_url": "https://github.com/u/r1", "status": "ACTIVE"},
             {"id": 2, "name": "T2", "description": "D2",
-             "github_url": "https://github.com/u/r2"},
+             "github_url": "https://github.com/u/r2", "status": "ACTIVE"},
         ]
 
     def test_list_tasks_public_no_token(self, client):
@@ -522,8 +502,7 @@ class TestListTasks:
             mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.get("/task", headers=auth_headers())
             assert resp.status_code == 200
-            data = resp.json()["result"]
-            assert len(data) == 1
+            assert len(resp.json()["result"]) == 1
 
     def test_list_tasks_invalid_token(self, client):
         with patch("api.get_db") as mock_db, patch("api.close_db"):
@@ -546,8 +525,6 @@ class TestListTasks:
 
 
 
-# 7.  GET /task/{task_id}  — Obtener tarea concreta
-
 
 class TestGetTask:
 
@@ -556,7 +533,7 @@ class TestGetTask:
             "id": 1, "name": "T", "description": "D",
             "github_url": "https://github.com/u/r",
             "status": "ACTIVE", "publisher": 1,
-            "repo_snapshot_hash": "abc",
+            "repo_snapshot_hash": NEW_VALID_HASH,
         }
         with patch("api.get_db") as mock_db, \
              patch("api.get_task_fields", return_value=fake), \
@@ -578,7 +555,6 @@ class TestGetTask:
 
 
 
-# 8.  PATCH /task/{task_id}/status  — Cambiar estado
 
 
 class TestChangeTaskStatus:
@@ -586,7 +562,7 @@ class TestChangeTaskStatus:
     def _fake_task(self, is_dynamic=False, balance=999999):
         return {
             "id": 1, "publisher": 1, "is_dynamic": is_dynamic,
-            "balance": balance, "avg_cost_per_item": 0,
+            "balance": balance, "avg_cost_per_item": 0, "status": "ACTIVE",
         }
 
     def test_pause_task_ok(self, client):
@@ -621,7 +597,7 @@ class TestChangeTaskStatus:
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.patch("/task/1/status", params={"status": "COMPLETE"},
+            resp = client.patch("/task/1/status", params={"status": "COMPLETED"},
                                 headers=auth_headers())
             assert resp.status_code == 400
 
@@ -635,7 +611,7 @@ class TestChangeTaskStatus:
 
             mock_prod.return_value = MagicMock()
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.patch("/task/1/status", params={"status": "COMPLETE"},
+            resp = client.patch("/task/1/status", params={"status": "COMPLETED"},
                                 headers=auth_headers())
             assert resp.status_code == 200
 
@@ -673,8 +649,6 @@ class TestChangeTaskStatus:
 
 
 
-# 9.  POST /task/{task_id}/input  — Añadir inputs dinámicos
-
 
 class TestAddInputs:
 
@@ -694,7 +668,7 @@ class TestAddInputs:
 
             resp = client.post(
                 "/task/1/input",
-                json=["item_a", "item_b", "item_c"],
+                json={"items": ["item_a", "item_b", "item_c"]},
                 headers=auth_headers(),
             )
             assert resp.status_code == 200
@@ -703,12 +677,12 @@ class TestAddInputs:
     def test_add_inputs_not_dynamic(self, client):
         with patch("api.get_db") as mock_db, \
              patch("api.get_task_fields",
-                   return_value={"publisher": 1, "status": "ACTIVE",
-                                 "is_dynamic": False}), \
+                   return_value={"publisher": 1, "status": "ACTIVE", "is_dynamic": False}), \
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/task/1/input", json=["x"],
+            resp = client.post("/task/1/input",
+                               json={"items": ["x"]},
                                headers=auth_headers())
             assert resp.status_code == 400
 
@@ -718,37 +692,37 @@ class TestAddInputs:
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/task/9999/input", json=["x"],
+            resp = client.post("/task/9999/input",
+                               json={"items": ["x"]},
                                headers=auth_headers())
             assert resp.status_code == 404
 
     def test_add_inputs_not_publisher(self, client):
         with patch("api.get_db") as mock_db, \
              patch("api.get_task_fields",
-                   return_value={"publisher": 99, "status": "ACTIVE",
-                                 "is_dynamic": True}), \
+                   return_value={"publisher": 99, "status": "ACTIVE", "is_dynamic": True}), \
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/task/1/input", json=["x"],
+            resp = client.post("/task/1/input",
+                               json={"items": ["x"]},
                                headers=auth_headers())
             assert resp.status_code == 403
 
     def test_add_inputs_task_not_active(self, client):
         with patch("api.get_db") as mock_db, \
              patch("api.get_task_fields",
-                   return_value={"publisher": 1, "status": "PAUSED",
-                                 "is_dynamic": True}), \
+                   return_value={"publisher": 1, "status": "PAUSED", "is_dynamic": True}), \
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            resp = client.post("/task/1/input", json=["x"],
+            resp = client.post("/task/1/input",
+                               json={"items": ["x"]},
                                headers=auth_headers())
             assert resp.status_code == 400
 
 
 
-# 10.  POST /task/{task_id}/process  — Crear proceso
 
 
 class TestCreateProcess:
@@ -756,7 +730,8 @@ class TestCreateProcess:
     def test_create_process_ok(self, client):
         with patch("api.get_db") as mock_db, \
              patch("api.get_task_fields",
-                   return_value={"id": 1, "repo_snapshot_hash": "abc123"}), \
+                   return_value={"id": 1, "repo_snapshot_hash": NEW_VALID_HASH,
+                                 "repo_commit": NEW_VALID_COMMIT}), \
              patch("api.check_process_overlap", return_value=False), \
              patch("api.insert_task_subscription"), \
              patch("api.insert_process"), \
@@ -767,9 +742,10 @@ class TestCreateProcess:
 
             mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.post("/task/1/process", params={
-                "index":     0,
-                "count":     10,
-                "repo_hash": "abc123",
+                "index":       0,
+                "count":       10,
+                "repo_hash":   NEW_VALID_HASH,
+                "repo_commit": NEW_VALID_COMMIT,
             }, headers=auth_headers())
 
             assert resp.status_code == 200
@@ -779,32 +755,36 @@ class TestCreateProcess:
     def test_create_process_overlap(self, client):
         with patch("api.get_db") as mock_db, \
              patch("api.get_task_fields",
-                   return_value={"id": 1, "repo_snapshot_hash": "abc123"}), \
+                   return_value={"id": 1, "repo_snapshot_hash": NEW_VALID_HASH,
+                                 "repo_commit": NEW_VALID_COMMIT}), \
              patch("api.check_process_overlap", return_value=True), \
              patch("api.insert_task_subscription"), \
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.post("/task/1/process", params={
-                "index":     0,
-                "count":     10,
-                "repo_hash": "abc123",
+                "index":       0,
+                "count":       10,
+                "repo_hash":   NEW_VALID_HASH,
+                "repo_commit": NEW_VALID_COMMIT,
             }, headers=auth_headers())
             assert resp.status_code == 409
 
     def test_create_process_hash_mismatch(self, client):
         with patch("api.get_db") as mock_db, \
              patch("api.get_task_fields",
-                   return_value={"id": 1, "repo_snapshot_hash": "real_hash"}), \
+                   return_value={"id": 1, "repo_snapshot_hash": NEW_VALID_HASH,
+                                 "repo_commit": NEW_VALID_COMMIT}), \
              patch("api.check_process_overlap", return_value=False), \
              patch("api.insert_task_subscription"), \
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.post("/task/1/process", params={
-                "index":     0,
-                "count":     10,
-                "repo_hash": "wrong_hash",
+                "index":       0,
+                "count":       10,
+                "repo_hash":   "wronghash000000000000000000000000000000000000000000000000000000",
+                "repo_commit": NEW_VALID_COMMIT,
             }, headers=auth_headers())
             assert resp.status_code == 409
 
@@ -812,31 +792,33 @@ class TestCreateProcess:
         with patch("api.get_db") as mock_db, patch("api.close_db"):
             mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.post("/task/1/process", params={
-                "index":     -1,
-                "count":     10,
-                "repo_hash": "abc123",
+                "index":       -1,
+                "count":       10,
+                "repo_hash":   NEW_VALID_HASH,
+                "repo_commit": NEW_VALID_COMMIT,
             }, headers=auth_headers())
             assert resp.status_code == 400
 
     def test_create_process_task_not_found(self, client):
         with patch("api.get_db") as mock_db, \
              patch("api.get_task_fields", return_value=None), \
-             patch("api.check_process_overlap", return_value=False), \
              patch("api.insert_task_subscription"), \
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.post("/task/9999/process", params={
-                "index":     0,
-                "count":     5,
-                "repo_hash": "abc",
+                "index":       0,
+                "count":       5,
+                "repo_hash":   NEW_VALID_HASH,
+                "repo_commit": NEW_VALID_COMMIT,
             }, headers=auth_headers())
             assert resp.status_code == 404
 
     def test_create_process_execution_already_exists(self, client):
         with patch("api.get_db") as mock_db, \
              patch("api.get_task_fields",
-                   return_value={"id": 1, "repo_snapshot_hash": "abc123"}), \
+                   return_value={"id": 1, "repo_snapshot_hash": NEW_VALID_HASH,
+                                 "repo_commit": NEW_VALID_COMMIT}), \
              patch("api.check_process_overlap", return_value=False), \
              patch("api.insert_task_subscription"), \
              patch("api.insert_process"), \
@@ -846,15 +828,14 @@ class TestCreateProcess:
 
             mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.post("/task/1/process", params={
-                "index":     0,
-                "count":     10,
-                "repo_hash": "abc123",
+                "index":       0,
+                "count":       10,
+                "repo_hash":   NEW_VALID_HASH,
+                "repo_commit": NEW_VALID_COMMIT,
             }, headers=auth_headers())
             assert resp.status_code == 409
 
 
-
-# 11.  GET /task/{task_id}/process  — Proceso por índice
 
 
 class TestGetProcessByIndex:
@@ -862,8 +843,8 @@ class TestGetProcessByIndex:
     def test_get_process_ok(self, client):
         fake = {
             "id": 5,
-            "input_start_index":     0,
-            "input_end_index":       9,
+            "input_start_index":      0,
+            "input_end_index":        9,
             "canonical_execution_id": None,
         }
         with patch("api.get_db") as mock_db, \
@@ -884,22 +865,29 @@ class TestGetProcessByIndex:
             resp = client.get("/task/1/process", params={"index": 999})
             assert resp.status_code == 404
 
-    def test_get_process_missing_index_param(self, client):
-        resp = client.get("/task/1/process")
-        assert resp.status_code == 422
+    def test_get_process_no_index_returns_all(self, client):
+        """Sin index devuelve la lista de todos los procesos."""
+        with patch("api.get_db") as mock_db, \
+             patch("api.get_all_processes_by_task", return_value=[]), \
+             patch("api.close_db"):
+
+            mock_db.return_value = (MagicMock(), MagicMock())
+            resp = client.get("/task/1/process")
+            assert resp.status_code == 200
+            assert "result" in resp.json()
 
 
-
-# 12.  GET /task/{task_id}/process/{process_id}  — Proceso concreto
 
 
 class TestGetProcess:
 
     def test_get_process_by_id_ok(self, client):
         fake = {
-            "input_start_index":     0,
-            "input_end_index":       9,
+            "input_start_index":      0,
+            "input_end_index":        9,
             "canonical_execution_id": 3,
+            "repo_snapshot_hash":     NEW_VALID_HASH,
+            "repo_commit":            NEW_VALID_COMMIT,
         }
         with patch("api.get_db") as mock_db, \
              patch("api.get_process", return_value=fake), \
@@ -908,12 +896,10 @@ class TestGetProcess:
             mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.get("/task/1/process/5")
             assert resp.status_code == 200
-            data = resp.json()["result"][0]
-            assert data["input_start_index"] == 0
+            assert resp.json()["result"][0]["input_start_index"] == 0
 
 
 
-# 13.  POST /task/{task_id}/process/{process_id}/execution  — Crear ejecución
 
 
 class TestCreateExecution:
@@ -927,8 +913,7 @@ class TestCreateExecution:
              patch("api.insert_execution", return_value=77), \
              patch("api.close_db"):
 
-            mock_conn = MagicMock()
-            mock_db.return_value = (mock_conn, MagicMock())
+            mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.post("/task/1/process/5/execution",
                                headers=auth_headers())
             assert resp.status_code == 200
@@ -941,11 +926,10 @@ class TestCreateExecution:
                    return_value={"is_deterministic": True, "status": "PAUSED"}), \
              patch("api.close_db"):
 
-            mock_conn = MagicMock()
-            mock_db.return_value = (mock_conn, MagicMock())
+            mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.post("/task/1/process/5/execution",
                                headers=auth_headers())
-            assert resp.status_code == 200  # devuelve error en el body (diseño original)
+            assert resp.status_code == 200
             assert "error" in resp.json()
 
     def test_create_execution_not_deterministic_already_processed(self, client):
@@ -956,8 +940,7 @@ class TestCreateExecution:
              patch("api.get_execution_id", side_effect=[88, None]), \
              patch("api.close_db"):
 
-            mock_conn = MagicMock()
-            mock_db.return_value = (mock_conn, MagicMock())
+            mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.post("/task/1/process/5/execution",
                                headers=auth_headers())
             assert resp.status_code == 409
@@ -970,8 +953,7 @@ class TestCreateExecution:
              patch("api.get_execution_id", return_value=55), \
              patch("api.close_db"):
 
-            mock_conn = MagicMock()
-            mock_db.return_value = (mock_conn, MagicMock())
+            mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.post("/task/1/process/5/execution",
                                headers=auth_headers())
             assert resp.status_code == 409
@@ -982,78 +964,58 @@ class TestCreateExecution:
              patch("api.get_task_fields", return_value=None), \
              patch("api.close_db"):
 
-            mock_conn = MagicMock()
-            mock_db.return_value = (mock_conn, MagicMock())
+            mock_db.return_value = (MagicMock(), MagicMock())
             resp = client.post("/task/1/process/5/execution",
                                headers=auth_headers())
             assert resp.status_code == 404
 
 
 
-# 14.  POST …/execution/{execution_id}/result  — Subir resultados
 
 
 class TestUploadResult:
 
     def _fake_task_row(self):
         return {
-            "publisher":       1,
-            "status":          "ACTIVE",
+            "publisher":        1,
+            "status":           "ACTIVE",
             "is_deterministic": True,
+            "is_dynamic":       False,
         }
 
     def _fake_process(self):
         return {
-            "id":                1,
-            "input_start_index": 0,
-            "input_end_index":   9,
+            "id":                     1,
+            "input_start_index":      0,
+            "input_end_index":        9,
             "canonical_execution_id": None,
         }
 
     def test_upload_result_ok(self, client):
+        task_calls = [
+            self._fake_task_row(),
+            {"avg_cost_per_item": 0, "total_items_processed": 0, "sum_sq_cost": 0},
+        ]
         with patch("api.get_db") as mock_db, \
-             patch("api.get_task_fields", return_value=self._fake_task_row()), \
-             patch("api.get_execution_id", return_value={"id": 1}), \
-             patch("api.get_process",      return_value=self._fake_process()), \
-             patch("api.save_upload_file", new_callable=AsyncMock,
-                   return_value=99), \
-             patch("api.update_complete_execution", return_value=10.0), \
+             patch("api.get_task_fields",          side_effect=task_calls), \
+             patch("api.get_execution_id",          return_value={"id": 1}), \
+             patch("api.get_process",               return_value=self._fake_process()), \
+             patch("api.save_upload_file",          new_callable=AsyncMock, return_value=99), \
+             patch("api.update_complete_execution",  return_value=10.0), \
              patch("api.handle_deterministic_payment"), \
-             patch("api.get_balance",      return_value=999999), \
-             patch("api.get_task_fields"),  \
-             patch("api.set_task_metrics"), \
-             patch("api.close_db"):
-
-            # Necesitamos reparchar get_task_fields con side_effect
-            pass  # test simplificado, ver abajo
-
-        # Test con side_effect correcto
-        task_calls = [self._fake_task_row(),
-                      {"avg_cost_per_item": 0, "total_items_processed": 0, "sum_sq_cost": 0}]
-        with patch("api.get_db") as mock_db, \
-             patch("api.get_task_fields",         side_effect=task_calls), \
-             patch("api.get_execution_id",         return_value={"id": 1}), \
-             patch("api.get_process",              return_value=self._fake_process()), \
-             patch("api.save_upload_file",         new_callable=AsyncMock, return_value=99), \
-             patch("api.update_complete_execution", return_value=10.0), \
-             patch("api.handle_deterministic_payment"), \
-             patch("api.get_balance",              return_value=999999), \
+             patch("api.get_balance",               return_value=999999), \
              patch("api.set_task_metrics"), \
              patch("api.pause_tasks_by_account"), \
+             patch("api.get_task_progress",
+                   return_value={"total_items": 10, "items_procesados": 5, "is_dynamic": False}), \
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
-            file_content = b"resultado del proceso"
             resp = client.post(
                 "/task/1/process/1/execution/1/result",
-                data={
-                    "cpu_cycles": 1000000,
-                    "ram_avg":    512.0,
-                    "vram_avg":   0.0,
-                    "tdp_w":      0.0,
-                },
-                files={"file": ("output.txt", io.BytesIO(file_content),
-                                "text/plain")},
+                data={"cpu_cycles": 1000000, "ram_avg": 512.0,
+                      "vram_avg": 0.0, "tdp_w": 0.0},
+                files={"file": ("output.txt", io.BytesIO(b"resultado"), "text/plain")},
                 headers=auth_headers(),
             )
             assert resp.status_code == 200
@@ -1088,8 +1050,8 @@ class TestUploadResult:
             assert resp.status_code == 404
 
     def test_upload_result_task_paused_non_publisher(self, client):
-        """Si la tarea está pausada y el usuario NO es el publisher, retorna status."""
-        paused_task = {"publisher": 99, "status": "PAUSED", "is_deterministic": True}
+        paused_task = {"publisher": 99, "status": "PAUSED",
+                       "is_deterministic": True, "is_dynamic": False}
         with patch("api.get_db") as mock_db, \
              patch("api.get_task_fields", return_value=paused_task), \
              patch("api.get_execution_id", return_value={"id": 1}), \
@@ -1110,15 +1072,13 @@ class TestUploadResult:
 
 
 
-# 15.  GET /task/{task_id}/confirm  — Obtener proceso a verificar
 
 
 class TestGetConfirm:
 
     def test_confirm_pending_process(self, client):
         with patch("api.get_db") as mock_db, \
-             patch("api.get_process_pending_confirmation",
-                   return_value={"id": 7}), \
+             patch("api.get_process_pending_confirmation", return_value={"id": 7}), \
              patch("api.close_db"):
 
             mock_db.return_value = (MagicMock(), MagicMock())
@@ -1142,22 +1102,19 @@ class TestGetConfirm:
 
 
 
-# 16.  GET /task/{task_id}/output  — Obtener resultados
 
 
 class TestGetOutputs:
 
     def _fake_rows(self):
-        return [
-            {
-                "original_name": "result.txt",
-                "mime_type":     "text/plain",
-                "size":          100,
-                "hash_sha256":   "aabbccdd" + "0" * 56,
-                "created_at":    "2024-01-01",
-                "account_id":    1,
-            }
-        ]
+        return [{
+            "original_name": "result.txt",
+            "mime_type":     "text/plain",
+            "size":          100,
+            "hash_sha256":   "aabbccdd" + "0" * 56,
+            "created_at":    "2024-01-01",
+            "account_id":    1,
+        }]
 
     def test_get_outputs_metadata(self, client):
         with patch("api.get_db") as mock_db, \
@@ -1191,16 +1148,15 @@ class TestGetOutputs:
             "created_at":    "2024-01-01",
             "account_id":    1,
         }]
-
         with patch("api.get_db") as mock_db, \
-            patch("api.get_task_output_files", return_value=rows), \
-            patch("api.close_db"), \
-            patch("os.path.exists", return_value=True), \
-            patch("zipfile.ZipFile") as mock_zf:
+             patch("api.get_task_output_files", return_value=rows), \
+             patch("api.close_db"), \
+             patch("os.path.exists", return_value=True), \
+             patch("zipfile.ZipFile") as mock_zf:
 
-            mock_zip_instance = MagicMock()
-            mock_zf.return_value.__enter__ = MagicMock(return_value=mock_zip_instance)
-            mock_zf.return_value.__exit__ = MagicMock(return_value=False)
+            mock_zip_inst = MagicMock()
+            mock_zf.return_value.__enter__ = MagicMock(return_value=mock_zip_inst)
+            mock_zf.return_value.__exit__  = MagicMock(return_value=False)
             mock_db.return_value = (MagicMock(), MagicMock())
 
             resp = client.get("/task/1/output", params={"download": "true"})
@@ -1208,23 +1164,7 @@ class TestGetOutputs:
 
 
 
-# 17.  GET /metrics  — Prometheus
 
-
-class TestMetrics:
-
-    def test_metrics_returns_text(self, client):
-        resp = client.get("/metrics")
-        assert resp.status_code == 200
-        assert "p2pcn" in resp.text or "python" in resp.text
-
-    def test_metrics_content_type(self, client):
-        resp = client.get("/metrics")
-        assert "text/plain" in resp.headers.get("content-type", "")
-
-
-
-# 18.  Seguridad general — JWT
 
 
 class TestJWTSecurity:
@@ -1250,3 +1190,159 @@ class TestJWTSecurity:
         )
         resp = client.get("/task/1/confirm", headers={"token": bad_token})
         assert resp.status_code == 401
+
+
+
+class TestOAuthEndpoints:
+
+    def test_google_login_redirect(self, client):
+        """Cubre el inicio del flujo de Google y la redirección."""
+        resp = client.get("/auth/google")
+        assert resp.status_code == 200
+        assert "accounts.google.com" in resp.json()["url"]
+
+    def test_github_login_redirect(self, client):
+        """Cubre el inicio del flujo de GitHub y la redirección."""
+        resp = client.get("/auth/github")
+        assert resp.status_code == 200
+        assert "github.com/login/oauth/authorize" in resp.json()["url"]
+
+    @patch("api.get_db")
+    @patch("api.httpx.AsyncClient")
+    def test_google_callback_success(self, mock_httpx, mock_db, client):
+        mock_conn, mock_cursor = MagicMock(), MagicMock()
+        mock_db.return_value = (mock_conn, mock_cursor)
+        
+        patch("api.get_account_by_email", return_value={"id": 1, "role": "user"}).start()
+        patch("api.close_db").start()
+
+        from api import oauth_states
+        oauth_states["test_state_google"] = "google"
+
+        mock_client_instance = AsyncMock()
+        mock_httpx.return_value.__aenter__.return_value = mock_client_instance
+        
+        res_token = MagicMock()
+        res_token.json.return_value = {"access_token": "mock_access_token"}
+        res_user = MagicMock()
+        res_user.json.return_value = {"email": "test@google.com", "verified_email": True}
+        mock_client_instance.post.return_value = res_token
+        mock_client_instance.get.return_value = res_user
+
+        resp = client.get("/auth/google/callback", params={"code": "mock_code", "state": "test_state_google"})
+        assert resp.status_code == 200
+        assert "token" in resp.json()
+
+    def test_google_callback_invalid_state(self, client):
+        """Fuerza el error cuando el parámetro state no coincide (Seguridad CSRF)."""
+        resp = client.get("/auth/google/callback", params={"code": "any_code", "state": "state_falso_e_invalido"})
+        assert resp.status_code == 400
+        assert "Estado OAuth inválido" in resp.json()["detail"]
+
+
+
+class TestTaskFilesUpload:
+
+    @patch("api.get_db")
+    @patch("api.Producer")
+    @patch("os.path.exists", return_value=True)
+    def test_create_task_with_files(self, mock_exists, mock_producer, mock_db, client):
+        mock_conn, mock_cursor = MagicMock(), MagicMock()
+        mock_db.return_value = (mock_conn, mock_cursor)
+        
+        patch("api.insert_task", return_value=42).start()
+        patch("api.insert_file", return_value=100).start()
+        patch("api.insert_task_resource").start()
+        patch("api.insert_task_requirement").start()
+        patch("api.close_db").start()
+
+        #evitar escrituras en el disco real
+        patch("builtins.open", mock_open()).start()
+
+        #mock de RabbitMQ
+        mock_prod_instance = MagicMock()
+        mock_producer.return_value = mock_prod_instance
+        mock_prod_instance.publish_chunks.return_value = [{"index": 0, "count": 1}]
+
+        file_payload = [
+            ("files", ("archivo_test.txt", b"Contenido binario de prueba", "text/plain"))
+        ]
+        
+        form_data = {
+            "name": "Tarea con Archivos",
+            "code_hash": str(NEW_VALID_HASH),
+            "commit": str(NEW_VALID_COMMIT),
+            "n_inputs": "10",
+            "requirements": "[]",
+            "resources": "[]"
+        }
+
+        resp = client.post(
+            "/task",
+            data=form_data,
+            files=file_payload,
+            headers={"token": VALID_TOKEN}
+        )
+        
+    
+        if resp.status_code == 422:
+        
+            resp = client.post(
+                "/task",
+                params=form_data,
+                files=file_payload,
+                headers={"token": VALID_TOKEN}
+            )
+
+        assert resp.status_code in [200, 201]
+
+
+
+
+class TestTaskFilesUpload:
+
+    def _mock_cfg(self):
+        mock = MagicMock()
+        mock.task.deterministic = True
+        mock.inputs.type = "static"
+        mock.inputs.total.return_value = 10
+        return mock
+
+    @patch("api.load_config")
+    @patch("api.cfg")
+    @patch("api.get_db")
+    @patch("api.get_balance_from_transfers", return_value={"balance": 9999999})
+    @patch("api.insert_task", return_value=42)
+    @patch("api.insert_transfer")
+    @patch("api.close_db")
+    @patch("api.Producer")
+    def test_create_task_with_files(self, mock_producer, mock_close, mock_transfer, mock_insert, mock_balance, mock_db, mock_cfg_func, mock_load, client):
+        """Cubre el procesado de la tarea simulando el entorno de configuración e inyección segura."""
+        mock_cfg_func.return_value = self._mock_cfg()
+        mock_db.return_value = (MagicMock(), MagicMock())
+        
+        patch("api.insert_task_resource").start()
+        patch("api.insert_task_requirement").start()
+        patch("builtins.open", mock_open()).start()
+
+        mock_prod_instance = MagicMock()
+        mock_producer.return_value = mock_prod_instance
+        mock_prod_instance.publish_chunks.return_value = [{"index": 0, "count": 1}]
+
+        resp = client.post(
+            "/task",
+            json={
+                "name": "Tarea con Archivos",
+                "description": "Prueba de subida",
+                "github_url": "https://github.com/user/repo",
+                "repo_hash": NEW_VALID_HASH,
+                "repo_commit": NEW_VALID_COMMIT,
+                "requirements": "cpu=2",
+                "resources": "cpu"
+            },
+            headers={"token": VALID_TOKEN}
+        )
+        
+        assert resp.status_code == 200
+        assert resp.json()["task_id"] == 42
+

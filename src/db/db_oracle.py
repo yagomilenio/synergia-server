@@ -812,14 +812,14 @@ def get_process_by_index(cursor, task_id, index, lock=False):
     sql = """
         SELECT id, input_start_index, input_end_index, canonical_execution_id
         FROM process
-        WHERE task_id = :1
-        AND input_start_index <= :2
-        AND input_end_index > :2
+        WHERE task_id = :task_id
+        AND input_start_index <= :indice
+        AND input_end_index > :indice
         FETCH FIRST 1 ROWS ONLY
     """
     if lock:
         sql = sql.replace("FETCH FIRST 1 ROWS ONLY", "FOR UPDATE")
-    _exec(cursor, sql, (task_id, index))
+    _exec(cursor, sql, {"task_id": task_id, "indice": index})
     return cursor.fetchone()
 
 def get_account_by_email(cursor, email, lock=False):

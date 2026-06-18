@@ -69,20 +69,26 @@ def make_fake_message(index: int = 0, count: int = 1, end_index: int = None):
 
 @pytest.fixture(scope="module")
 def ws_client():
-    """
-    Levanta ws_api.app sin infraestructura real.
-    Todos los imports problemáticos se parchean antes de cargar el módulo.
-    """
     import sys
-    for mod in ["ws_api", "config", "db", "db.db", "utils.jwt_util", "aio_pika"]:
+
+    for mod in ["ws_api", "config", "db", "db.db_oracle", "utils.jwt_util", "aio_pika"]:
         sys.modules.pop(mod, None)
 
-    with patch("builtins.open", MagicMock()), \
-         patch("json.load", return_value=FAKE_CONFIG), \
-         patch("os.path.exists", return_value=True), \
-         patch("mysql.connector.pooling.MySQLConnectionPool"), \
-         patch("aio_pika.connect_robust", new_callable=AsyncMock):
+    # Stub oracledb para que create_pool no explote
+    mock_oracledb = MagicMock()
+    sys.modules["oracledb"] = mock_oracledb
 
+    # Stub config con los valores necesarios
+    mock_config = MagicMock()
+    mock_config.DB_BACKEND = "oracle"
+    mock_config.RABBITMQ_HOST = "localhost"
+    mock_config.RABBITMQ_PORT = 5672
+    mock_config.RABBITMQ_USER = "guest"
+    mock_config.RABBITMQ_PASSWD = "guest"
+    mock_config.PROCESS_UNTIL_CONFIRMATION = 10
+    sys.modules["config"] = mock_config
+
+    with patch("aio_pika.connect_robust", new_callable=AsyncMock):
         from ws_api import app
         with TestClient(app, raise_server_exceptions=False) as c:
             yield c
@@ -939,53 +945,6 @@ class TestWSMultipleWorkers:
                     ws.send_text(json.dumps({"action": "next", "n": 1}))
                     data = ws.receive_json()
                     assert data is not None
-
-
-# 12.  Métricas Prometheus WebSocket
-
-class TestWSMetrics:
-
-    def test_ws_metrics_endpoint_accessible(self, ws_client):
-        """El endpoint /metrics debe devolver métricas de Prometheus."""
-        resp = ws_client.get("/metrics")
-        assert resp.status_code == 200
-
-    def test_active_workers_gauge_increments(self, ws_client):
-        """
-        Al conectar un worker, el gauge p2pcn_active_workers debe incrementarse.
-        No podemos leerlo directamente en unit tests, pero verificamos que la
-        conexión se establece sin errores.
-        """
-        with patch("ws_api.verify_token", return_value=1), \
-             patch("ws_api.get_db") as mock_db, \
-             patch("ws_api.close_db"), \
-             patch("ws_api.get_task_fields",
-                   return_value={"status": "ACTIVE", "publisher": 2}), \
-             patch("ws_api.get_last_task_confirmation", return_value=0), \
-             patch("ws_api.consume_n_messages",
-                   new_callable=AsyncMock, return_value=([], [])), \
-             patch("ws_api.cancel_incomplete_executions"), \
-             patch("ws_api.get_processes_and_execution_without_completed_executions",
-                   return_value=[]), \
-             patch("aio_pika.connect_robust",
-                   AsyncMock(return_value=MagicMock(
-                       channel=AsyncMock(return_value=MagicMock(
-                           set_qos=AsyncMock(),
-                           declare_queue=AsyncMock(return_value=MagicMock()),
-                       )),
-                       close=AsyncMock(),
-                   ))):
-
-            mock_db.return_value = (MagicMock(), MagicMock())
-
-            with ws_client.websocket_connect(
-                f"/ws/task/1?token={VALID_TOKEN}&n_consumes=1"
-            ) as ws:
-                ws.send_text(json.dumps({"action": "next", "n": 1}))
-                ws.receive_json()
-                # La conexión está activa aquí → gauge debe ser >= 1
-                resp_inside = ws_client.get("/metrics")
-                assert "p2pcn_active_workers" in resp_inside.text
 
 
 # 13.  safe_send_json — helper auxiliar

@@ -20,3 +20,5 @@ env/
 
 .env
 storage
+.coverage
+.pytest_cache/
