@@ -369,23 +369,3 @@ def cfg() -> Config:
     return _config
 
 
-
-if __name__ == "__main__":
-    test_url = "https://github.com/yagomilenio/yescrypt_task_cracker/" 
-    cfg_obj = load_config(test_url)
-
-    print("=== Task ===")
-    print("Deterministic:", cfg_obj.task.deterministic)
-
-    print("\n=== Requirements ===")
-    print(cfg_obj.requirements.packages)
-
-    print("\n=== Inputs ===")
-    items = cfg_obj.inputs.active_items()
-    print(f"Total items: {cfg_obj.inputs.total()}")
-    print("Primeros 10 items:", items[:10])
-
-
-    print("\n=== Outputs ===")
-    output_path = cfg_obj.outputs.resolve_filename(0, 9)
-    print("Output path:", output_path)
