@@ -1,0 +1,44 @@
+# Control de versiones
+.git/
+
+# Secretos y configuración local (no leer ni mostrar)
+.env
+**/.env
+infra/ngrok/ngrok.yml
+src/config.json
+
+# Dependencias y entornos
+venv/
+env/
+.venv/
+node_modules/
+
+# Cachés, compilados y cobertura
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# Datos generados (resultados subidos por workers)
+storage/
+src/storage/
+
+# Lockfiles / dependencias fijadas
+src/requirements.txt
+src/tests/requirements
+
+# Assets binarios y diagramas
+docs/*.png
+docs/*.svg
+docs/*.drawio
+docs/*.html
+LICENSE
+
+# Dashboards exportados (JSON grande)
+infra/monitoring/dashboards/
